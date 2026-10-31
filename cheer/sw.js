@@ -1,6 +1,6 @@
 // 응원 알리미: 앱 셸 캐시 + 알림 클릭 시 앱 열기
-const CACHE = 'cheer-v1';
-const FILES = ['./', './index.html', './core.js', './manifest.webmanifest', './icon.svg'];
+const CACHE = 'cheer-v2';
+const FILES = ['./', './index.html', './core.js', './manifest.webmanifest', './icon.svg', './races/177.json'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

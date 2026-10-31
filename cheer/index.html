@@ -130,6 +130,19 @@
   function saveSent() { localStorage.setItem(SENT_KEY, JSON.stringify([...sent])); }
 
   function schedule() { return C.buildSchedule(state, Date.now()); }
+  // 주자 개인 기록 페이지(배번이 있고 대회를 불러온 경우) 또는 기록 사이트
+  function runnerUrl(r) {
+    if (r && r.bib && state.raceData && state.raceData.resultBase) return state.raceData.resultBase + encodeURIComponent(r.bib);
+    return state.resultUrl;
+  }
+  async function loadRace(id) {
+    const res = await fetch('races/' + id + '.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('불러오기 실패');
+    const d = await res.json();
+    Object.assign(state, { race: d.name, date: d.date, start: d.start, resultUrl: d.resultBase, raceData: d });
+    save();
+    return d;
+  }
   function startMsOf(r) { return C.clockToMs(state.date, r.start || state.start); }
 
   function countdown(ms) {
@@ -218,6 +231,7 @@
         '<button class="btn small ghost" data-act="edit-runner" data-r="' + r.id + '">수정</button></div>' +
         '<div class="splits">' + (splits.length ? '기록: ' + splits.map((s) => (+s.km.toFixed(2)) + 'km ' + C.fmtDuration(s.sec)).join(' · ') : '기록 없음 · 목표 기준으로 계산') + '</div>' +
         '<div class="btns"><button class="btn small" data-act="splits" data-r="' + r.id + '">기록 입력</button>' +
+        (runnerUrl(r) ? '<a class="btn small ghost" href="' + esc(runnerUrl(r)) + '" target="_blank" rel="noopener">' + (r.bib && state.raceData ? '#' + esc(r.bib) + ' 기록 보기' : '기록 사이트') + '</a>' : '') +
         (splits.length ? '<button class="btn small ghost" data-act="clear-splits" data-r="' + r.id + '">기록 지우기</button>' : '') + '</div></div>';
     }
     return h;
@@ -225,6 +239,15 @@
 
   function renderSpots() {
     let h = '<div class="btns" style="margin:0 0 12px"><button class="btn primary" data-act="add-spot">+ 응원 지점 추가</button></div>';
+    if (state.raceData) {
+      // 대회 측정 지점 빠른 추가(기록이 찍히는 곳이라 예상이 가장 정확)
+      const have = new Set(state.spots.map((s) => s.km));
+      const pts = new Map();
+      state.raceData.courses.forEach((c) => c.points.forEach((p) => { if (p.km < c.km - 0.01 && !pts.has(p.km)) pts.set(p.km, p.name); }));
+      const chips = [...pts.entries()].sort((a, b) => a[0] - b[0]).filter(([km]) => !have.has(km));
+      if (chips.length) h += '<div class="card"><div class="t2">측정 지점 빠른 추가 · 기록이 찍히는 곳</div><div class="btns">' +
+        chips.map(([km, name]) => '<button class="btn small" data-act="quick-spot" data-km="' + km + '" data-name="' + esc(name) + '">' + esc(name) + (String(name).includes(String(km)) ? '' : ' ' + km + 'km') + '</button>').join('') + '</div></div>';
+    }
     if (!state.spots.length) return h + '<div class="card empty">응원할 위치를 km로 추가<br><span class="hint">예: 반환점 21km, 30km 급수대</span></div>';
     const rows = schedule();
     for (const sp of state.spots.slice().sort((a, b) => a.km - b.km)) {
@@ -239,7 +262,10 @@
 
   function renderSettings() {
     const perm = typeof Notification === 'undefined' ? '지원 안 함(아이폰은 홈 화면에 추가 후 사용)' : { granted: '켜짐', denied: '차단됨(브라우저 설정에서 허용)', default: '꺼짐' }[Notification.permission];
-    return '<div class="card">' +
+    return '<div class="card"><div class="t1">대회 불러오기</div>' +
+      '<div class="hint">' + (state.raceData ? '불러옴: ' + esc(state.raceData.name) + ' · 코스·측정 지점·출발 시각 반영' : '대회 정보(날짜·출발·코스·측정 지점)를 한 번에 설정') + '</div>' +
+      '<div class="btns"><button class="btn" data-act="load-race" data-id="177">2026 JTBC 서울마라톤</button></div></div>' +
+      '<div class="card">' +
       '<label class="f">대회 이름<input id="s-race" value="' + esc(state.race) + '" placeholder="예: 2026 OO마라톤"></label>' +
       '<div class="grid2"><label class="f">대회 날짜<input id="s-date" type="date" value="' + esc(state.date) + '"></label>' +
       '<label class="f">기본 출발 시각<input id="s-start" type="time" value="' + esc(state.start) + '"></label></div>' +
@@ -265,7 +291,10 @@
   function runnerSheet(r) {
     const isNew = !r;
     r = r || { id: uid(), name: '', bib: '', courseKm: 42.195, start: '', targetSec: null, splits: [] };
-    const opts = [[42.195, '풀 42.195km'], [21.0975, '하프 21.1km'], [10, '10K'], [5, '5K']];
+    const opts = state.raceData
+      ? state.raceData.courses.map((c) => [c.km, c.name + ' ' + c.km + 'km'])
+      : [[42.195, '풀 42.195km'], [21.0975, '하프 21.1km'], [10, '10K'], [5, '5K']];
+    if (isNew && state.raceData && opts.length) r.courseKm = opts.find((o) => o[0] > 40) ? opts.find((o) => o[0] > 40)[0] : opts[0][0];
     const custom = !opts.some((o) => o[0] === r.courseKm);
     openSheet('<h3>' + (isNew ? '주자 추가' : '주자 수정') + '</h3>' +
       '<div class="grid2"><label class="f">이름<input id="r-name" value="' + esc(r.name) + '" placeholder="이름"></label>' +
@@ -328,7 +357,8 @@
     const cur = C.normalizeSplits(r.splits).map((s) => (+s.km.toFixed(4)) + 'km ' + C.fmtDuration(s.sec)).join('\n');
     openSheet('<h3>' + esc(r.name) + ' 기록 입력</h3>' +
       '<div class="hint">기록 사이트의 구간 기록(5km, 10km, 하프…)을 복사해 붙여넣기. 한 줄에 "거리 경과시간" 형식이면 인식.<br>예) 10km 0:55:12 / Half 1:58:40</div>' +
-      (state.resultUrl ? '<div class="btns"><a class="btn small ghost" href="' + esc(state.resultUrl) + '" target="_blank" rel="noopener">기록 사이트 열기</a></div>' : '') +
+      '<div class="btns">' + (runnerUrl(r) ? '<a class="btn small ghost" href="' + esc(runnerUrl(r)) + '" target="_blank" rel="noopener">' + (r.bib && state.raceData ? '#' + esc(r.bib) + ' 기록 열기' : '기록 사이트 열기') + '</a>' : '') +
+      (navigator.clipboard && navigator.clipboard.readText ? '<button class="btn small" id="sp-clip">복사한 기록 붙여넣기</button>' : '') + '</div>' +
       '<label class="f">구간 기록<textarea id="sp-text" placeholder="5km 0:27:40\n10km 0:55:12">' + esc(cur) + '</textarea></label>' +
       '<div class="hint" id="sp-prev"></div>' +
       '<div class="btns" style="margin-top:16px"><button class="btn primary block" id="sp-save">저장</button></div>');
@@ -337,6 +367,10 @@
       $('#sp-prev').textContent = p.length ? '인식: ' + p.map((s) => (+s.km.toFixed(2)) + 'km ' + C.fmtDuration(s.sec)).join(' · ') : '인식된 기록 없음';
     };
     $('#sp-text').addEventListener('input', preview); preview();
+    if ($('#sp-clip')) $('#sp-clip').addEventListener('click', async () => {
+      try { $('#sp-text').value = await navigator.clipboard.readText(); preview(); }
+      catch (e) { toast('붙여넣기 권한 없음 · 입력칸 길게 눌러 붙여넣기'); }
+    });
     $('#sp-save').addEventListener('click', () => {
       r.splits = C.parseSplits($('#sp-text').value, r.courseKm);
       save(); closeSheet(); render(); toast(r.name + ' 기록 ' + r.splits.length + '개 반영');
@@ -411,6 +445,16 @@
     else if (act === 'add-spot') spotSheet();
     else if (act === 'edit-spot') spotSheet(spot);
     else if (act === 'splits') splitsSheet(runner);
+    else if (act === 'load-race') {
+      try {
+        const d = await loadRace(b.dataset.id);
+        render(); toast(d.name + ' 불러옴');
+      } catch (e) { toast('대회 정보 불러오기 실패'); }
+    }
+    else if (act === 'quick-spot') {
+      state.spots.push({ id: uid(), name: b.dataset.name, km: +b.dataset.km, memo: '' });
+      save(); render();
+    }
     else if (act === 'clear-splits') { if (confirm('기록 지우기?')) { runner.splits = []; save(); render(); } }
     else if (act === 'pass') {
       const sec = (Date.now() - startMsOf(runner)) / 1000;
